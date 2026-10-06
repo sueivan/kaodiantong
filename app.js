@@ -196,6 +196,7 @@
     const grid = document.getElementById('grid');
     if (cats.length === 0) {
       grid.innerHTML = `<div class="empty" style="grid-column:1/3"><div class="big">📚</div><p>还没有分类，点右下角 ＋ 新建学科分类</p>
+        <p class="muted" style="font-size:12px;margin-top:6px">已有题库文档？直接点上方 <b>📥 导入题库</b>，会自动建好分类</p>
         <button class="btn-ghost" id="loadDemo" style="margin-top:12px">载入示例题库看看</button></div>`;
       const d = document.getElementById('loadDemo');
       if (d) d.onclick = async () => { d.disabled = true; d.textContent = '正在载入…'; await loadLibDemo(); toast('已载入示例题库'); renderLib(); };
@@ -230,8 +231,9 @@
       `<div class="container"><div class="card">
         <input id="c-name" placeholder="分类名称（如：药理学）" value="${esc(c.name)}">
         <input id="c-desc" placeholder="简短说明（如：作用于 CNS 的药物）" value="${esc(c.desc)}">
-        <div class="section-title">封面（可选）</div>
-        <input type="file" id="c-cover" accept="image/*" capture="environment">
+        <div class="section-title">封面（可选 · 仅限图片）</div>
+        <input type="file" id="c-cover" accept="image/*">
+        <div class="muted" style="font-size:12px">这里选的是分类的<b>封面图片</b>（jpg / png），<b>不是题库文档</b>。<br>要导入题库：返回题库首页 → 点顶部「📥 导入题库」。</div>
         <div class="photo-grid" id="c-prev" style="margin-top:8px">${cover ? `<div><img src="${cover}"></div>` : ''}</div>
         <button class="btn-primary" id="c-save">保存</button>
         ${id ? '<button class="btn-danger" id="c-del" style="width:100%;margin-top:8px">删除该分类（含其题目）</button>' : ''}
@@ -240,6 +242,11 @@
     const prev = document.getElementById('c-prev');
     document.getElementById('c-cover').onchange = async (e) => {
       const f = e.target.files[0]; if (!f) return;
+      if (!/^image\//i.test(f.type || '')) {
+        toast('封面只能选图片（jpg / png）——题库文档请用「📥 导入题库」');
+        e.target.value = '';
+        return;
+      }
       try { cover = await fileToDataURL(f); prev.innerHTML = `<div><img src="${cover}"></div>`; } catch (_) {}
       e.target.value = '';
     };
@@ -394,7 +401,9 @@
     show();
   }
 
-  // ---- 题库文档解析（txt / md / csv / pdf）----
+  // ---- 题库文档解析（txt / md / csv / pdf / docx）----
+  // 章节标题行，如「单选题（80题）」「多选题 (10题)」——解析前剔除，避免混入答案
+  const SECTION_RE = /^\s*[\u4e00-\u9fa5A-Za-z]{2,10}\s*[（(]\s*\d+\s*题\s*[)）]\s*$/;
   function isCSV(text) {
     const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
     if (lines.length < 2) return false;
@@ -431,15 +440,24 @@
     return { q: block.trim(), a: '' };
   }
   function parseQABank(text) {
-    text = (text || '').replace(/\r\n?/g, '\n').trim();
+    text = (text || '').replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ');
+    // 逐行去首尾空白 + 剔除「单选题（80题）」这类章节标题行
+    text = text.split('\n')
+      .filter((l) => !SECTION_RE.test(l))
+      .map((l) => l.trim())
+      .join('\n').trim();
     if (!text) return [];
     if (isCSV(text)) return parseCSVBank(text);
     let chunks = text.split(/(?=\n\s*(?:问|题|Q)[:：])/i);
-    if (chunks.length <= 1) chunks = text.split(/\n(?=\s*\d+[\.、)]\s+)/);
-    if (chunks.length <= 1) chunks = text.split(/\n\s*\n/);
+    if (chunks.length <= 1) chunks = text.split(/\n(?=\s*\d+[\.、)．]\s*)/);
+    if (chunks.length <= 1) {
+      // 仅当能切成 ≥2 段时才用「空行分隔」；否则整篇会被当成 1 道伪题目（选中非题库文档时的典型症状）
+      const byBlank = text.split(/\n\s*\n/).filter((x) => x.trim());
+      if (byBlank.length >= 2) chunks = byBlank;
+    }
     const out = [];
     for (let blk of chunks) {
-      blk = blk.replace(/^\s*\d+[\.、)]\s*/, '').trim();
+      blk = blk.replace(/^\s*\d+[\.、)．]\s*/, '').trim();
       if (!blk) continue;
       const { q, a } = splitQA(blk);
       if (q && q.length >= 2) out.push({ question: q, answer: a });
@@ -479,13 +497,13 @@
   // ---- 导入题库 ----
   async function renderLibImport() {
     const cats = (await DB.getAll('library')).filter((x) => x.type === 'cat');
-    app.innerHTML = header('导入题库', '支持 txt / md / csv / pdf（文档形式题库）') +
+    app.innerHTML = header('导入题库', '支持 txt / md / csv / pdf / docx（文档形式题库）') +
       `<div class="container"><div class="card">
-        <div class="section-title">选择文件</div>
-        <input type="file" id="f" accept=".txt,.md,.csv,.pdf" multiple>
-        <div class="muted" style="font-size:12px">txt/md 自动识别「题目 + 答案」结构；csv 需含 题目/答案 列；pdf 提取文字后解析。可多选。</div>
+        <div class="section-title">① 选择题库文件</div>
+        <input type="file" id="f" multiple>
+        <div class="muted" style="font-size:12px">支持 <b>.txt / .md / .csv / .pdf / .docx</b>。此处<b>不限制文件类型</b>（任何文件都能选中），选错格式会在下方给出提示，不会再点不动。可多选。</div>
         <div id="preview" style="margin-top:10px"></div>
-        <div class="section-title" style="margin-top:12px">导入到分类</div>
+        <div class="section-title" style="margin-top:12px">② 导入到分类</div>
         <select id="cat"><option value="">— 选择已有分类 —</option>${cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
         <input id="newcat" placeholder="或输入新分类名（如：有机化学考研）" style="margin-top:8px">
         <button class="btn-primary" id="imp" disabled style="margin-top:12px">先选择文件</button>
@@ -500,12 +518,38 @@
       btn.disabled = true; btn.textContent = '解析中…';
       try {
         parsed = [];
+        const skipped = [];
         for (const f of files) {
-          const txt = /\.pdf$/i.test(f.name) ? await extractPdfText(f) : await f.text();
+          let txt;
+          if (/\.pdf$/i.test(f.name)) txt = await extractPdfText(f);
+          else if (/\.docx$/i.test(f.name)) {
+            if (!window.DocxText) throw new Error('docx 解析模块未加载，请刷新页面后重试');
+            txt = await DocxText.extractDocxText(f);
+          } else if (/\.doc$/i.test(f.name)) {
+            throw new Error('旧版 .doc 无法直接解析，请用 Word 另存为 .docx 或 .txt 后再导入');
+          } else if (/\.(txt|md|csv)$/i.test(f.name)) txt = await f.text();
+          else throw new Error(`「${f.name}」不是题库文档。本题库只认这五种格式：txt / md / csv / pdf / docx。`);
           const arr = parseQABank(txt);
+          // 反误判①：源码 / 说明书类文档
+          const nospace = txt.replace(/\s/g, '').length;
+          const ansCount = arr.filter((x) => x.answer && x.answer.trim()).length;
+          // 反误判②：整篇只析出 1~2 组、且一组答案都没有、正文又不短 → 是通知/散文，不是题库
+          const suspicious = arr.length > 0 && arr.length <= 2 && ansCount === 0 && nospace >= 600;
+          if (!arr.length || suspicious) {
+            const head = txt.slice(0, 4000);
+            if (/<!DOCTYPE html>|<div class=|function\s+\w+\s*\(|软件说明书|源程序/i.test(head)) {
+              throw new Error(`「${f.name}」是网页源码 / 说明书类文档，里面没有题目，无法导入。请改选含「题干 + 答案」的题库文件。`);
+            }
+            if (suspicious) {
+              throw new Error(`「${f.name}」不像题库：全文约 ${nospace} 字，既没有题号、也没识别出任何「答案：」。它可能是通知、说明或其它文档，请改选正确的题库文件。`);
+            }
+            skipped.push(f.name);
+            continue;
+          }
           parsed = parsed.concat(arr.map((x) => ({ ...x, src: f.name })));
         }
-        prev.innerHTML = `<div class="card" style="background:#eef7ee">已解析 <b>${parsed.length}</b> 道题（来自 ${files.length} 个文件）。</div>`;
+        if (!parsed.length) throw new Error('没从所选文件里识别出题目。请确认文件内容是「题干 + 答案」形式（例：\n1. 信息论的奠基者是谁？\n答案：香农）。');
+        prev.innerHTML = `<div class="card" style="background:#eef7ee">已解析 <b>${parsed.length}</b> 道题（来自 ${files.length} 个文件）。${skipped.length ? `<br><span class="muted" style="font-size:12px">未识别出题目的文件：${skipped.map(esc).join('、')}</span>` : ''}</div>`;
         btn.disabled = false; btn.textContent = `导入 ${parsed.length} 题`;
       } catch (err) {
         prev.innerHTML = `<div class="card" style="background:#fdeeee">解析失败：${esc(err.message)}</div>`;
@@ -601,7 +645,7 @@
     const r = await fetch(cfg.endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
-      body: JSON.stringify({ model: cfg.model || 'deepseek-chat', messages: [{ role: 'system', content: system }, { role: 'user', content: user }] })
+      body: JSON.stringify({ model: cfg.model || 'glm-4.7-flash', messages: [{ role: 'system', content: system }, { role: 'user', content: user }] })
     });
     if (!r.ok) throw new Error('AI 接口错误 ' + r.status);
     const j = await r.json();
@@ -639,11 +683,11 @@
   async function renderAISettings() {
     const cfg = ((await DB.get('meta', 'aiConfig')) || {}).value || {};
     const PRESETS = [
-      { name: '豆包', endpoint: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', model: 'doubao-pro-32k' },
-      { name: 'DeepSeek', endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-chat' },
+      { name: '智谱 GLM（免费）', endpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4.7-flash' },
+      { name: 'DeepSeek', endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash' },
       { name: '通义千问', endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus' },
-      { name: 'Kimi', endpoint: 'https://api.moonshot.cn/v1/chat/completions', model: 'moonshot-v1-8k' },
-      { name: '智谱 GLM', endpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4-flash' },
+      { name: 'Kimi', endpoint: 'https://api.moonshot.cn/v1/chat/completions', model: 'kimi-k3' },
+      { name: '豆包', endpoint: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', model: 'doubao-seed-2-1-pro-260628' },
     ];
     app.innerHTML = header('AI 设置', '填入你自己的大模型接口（密钥仅存本机，不上传）') +
       `<div class="container"><div class="card">
@@ -654,8 +698,8 @@
         <div class="section-title" style="margin-top:10px">API Key</div>
         <input id="key" type="password" placeholder="粘贴你的密钥" value="${esc(cfg.apiKey || '')}">
         <div class="section-title" style="margin-top:10px">模型名</div>
-        <input id="model" placeholder="deepseek-chat" value="${esc(cfg.model || '')}">
-        <div class="muted" style="font-size:12px;margin-top:8px">支持任意兼容 /chat/completions 协议的端点。点上方芯片即自动填好「接口地址 + 模型名」，豆包（火山方舟）、DeepSeek、通义千问（阿里云百炼）、Kimi、智谱 GLM 都能用，只差你的 Key。<b>豆包</b>请把「模型名」改成你在火山方舟开通的模型 ID（或推理接入点 <code>ep-...</code>）。未配置时 AI 按钮会提示来这里填。</div>
+        <input id="model" placeholder="glm-4.7-flash" value="${esc(cfg.model || '')}">
+        <div class="muted" style="font-size:12px;margin-top:8px">支持任意兼容 /chat/completions 协议的端点。点上方芯片即自动填好「接口地址 + 模型名」，只差你的 Key。<b>想零成本就用「智谱 GLM（免费）」</b>——<code>glm-4.7-flash</code> 目前免费、无需充值；DeepSeek、通义千问（阿里云百炼）、Kimi、豆包（火山方舟）均已按 2026 年最新模型名填好。<b>豆包</b>若报 model not found，请把「模型名」改成你在火山方舟「推理接入点」里看到的 <code>ep-...</code> 接入点 ID。未配置时 AI 按钮会提示来这里填。</div>
         <button class="btn-primary" id="save" style="margin-top:12px">保存</button>
         <button class="btn-ghost" id="back" style="width:100%;margin-top:8px">返回</button>
       </div></div>`;
@@ -692,6 +736,11 @@
     app.innerHTML = header('我的', '数据管理与关于') +
       `<div class="container">
         ${accountHtml}
+        <div class="card" style="margin-top:14px">
+          <div class="section-title">题库导入</div>
+          <button class="btn-ghost" id="toImport" style="width:100%;margin:6px 0">📥 导入题库（txt / md / csv / pdf / docx）</button>
+          <p class="muted" style="font-size:12px;margin:2px 0 10px">题库首页顶部也有同一个入口。提醒：「编辑分类」页里的「选择文件」是选<b>分类封面图</b>的，那里 <b>选不了题库文档</b>。</p>
+        </div>
         <div class="card" style="margin-top:14px">
           <div class="section-title">数据备份与恢复（本机）</div>
           <button class="btn-ghost" id="exp" style="width:100%;margin:6px 0">导出数据备份</button>
@@ -735,6 +784,7 @@
           </div>
         </div>
       </div>`;
+    document.getElementById('toImport').onclick = () => go('#/lib/import');
     document.getElementById('exp').onclick = exportData;
     document.getElementById('imp').onclick = () => document.getElementById('impFile').click();
     document.getElementById('impFile').onchange = importData;

@@ -1,14 +1,15 @@
 /* 离线缓存外壳：联网时始终取最新，断网时回退缓存 */
-const CACHE = 'examdrill-v1';
+const CACHE = 'examdrill-v2';
 const SHELL = [
   './',
   'index.html',
   'styles.css?v=1',
-  'app.js?v=1',
+  'app.js?v=3',
   'db.js?v=1',
   'seed.js?v=1',
   'cloud-config.js?v=1',
   'cloud.js?v=1',
+  'docx.js?v=1',
   'manifest.webmanifest?v=1',
   'assets/icon-192.png',
   'assets/icon-512.png',
