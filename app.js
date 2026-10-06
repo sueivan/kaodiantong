@@ -283,6 +283,7 @@
           <button class="btn-ghost btn-sm" id="ai" style="flex:1">🤖 AI 考点分析</button>
           <button class="btn-ghost btn-sm" id="predict" style="flex:1">🎯 AI 押题</button>
         </div>
+        <button class="btn-ghost" id="add" style="width:100%;margin-bottom:10px">➕ 添加题目</button>
         <div id="list"></div>
       </div>` + fab('+');
     const list = document.getElementById('list');
