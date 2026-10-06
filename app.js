@@ -20,6 +20,8 @@
   }
   function today() { return new Date().toISOString().slice(0, 10); }
   function uid(p) { return (p || 'id') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  // 间隔复习（莱特纳盒子）：盒号 1→5 对应下次复习间隔 0/1/3/7/16 天
+  function dueOf(box) { const d = [0, 0, 1, 3, 7, 16]; return Date.now() + (d[box] || 0) * 86400000; }
   function toast(msg) {
     toastEl.textContent = msg; toastEl.classList.add('show');
     clearTimeout(toastTimer);
