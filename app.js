@@ -184,7 +184,7 @@
     const all = await DB.getAll('library');
     const cats = all.filter((x) => x.type === 'cat');
     const items = all.filter((x) => x.type === 'item');
-    app.innerHTML = header('复习库', '自建学科分类与题库') +
+    app.innerHTML = header('Kaodiantong 考点通 V1.0', '智能刷题与押题 · 离线 PWA') +
       `<div class="container">
         <div class="row" style="gap:8px;margin-bottom:10px">
           <button class="btn-primary btn-sm" id="import" style="flex:1">📥 导入题库</button>
@@ -601,7 +601,7 @@
     const r = await fetch(cfg.endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
-      body: JSON.stringify({ model: cfg.model || 'gpt-4o-mini', messages: [{ role: 'system', content: system }, { role: 'user', content: user }] })
+      body: JSON.stringify({ model: cfg.model || 'deepseek-chat', messages: [{ role: 'system', content: system }, { role: 'user', content: user }] })
     });
     if (!r.ok) throw new Error('AI 接口错误 ' + r.status);
     const j = await r.json();
@@ -639,23 +639,23 @@
   async function renderAISettings() {
     const cfg = ((await DB.get('meta', 'aiConfig')) || {}).value || {};
     const PRESETS = [
+      { name: '豆包', endpoint: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', model: 'doubao-pro-32k' },
       { name: 'DeepSeek', endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-chat' },
       { name: '通义千问', endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-plus' },
       { name: 'Kimi', endpoint: 'https://api.moonshot.cn/v1/chat/completions', model: 'moonshot-v1-8k' },
       { name: '智谱 GLM', endpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4-flash' },
-      { name: 'OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini' },
     ];
     app.innerHTML = header('AI 设置', '填入你自己的大模型接口（密钥仅存本机，不上传）') +
       `<div class="container"><div class="card">
         <div class="section-title">快速选择服务商</div>
         <div class="chips" id="presets">${PRESETS.map((p) => `<span class="chip" data-ep="${esc(p.endpoint)}" data-m="${esc(p.model)}">${esc(p.name)}</span>`).join('')}</div>
-        <div class="section-title" style="margin-top:10px">接口地址（OpenAI 兼容 /chat/completions）</div>
-        <input id="ep" placeholder="https://api.openai.com/v1/chat/completions" value="${esc(cfg.endpoint || '')}">
+        <div class="section-title" style="margin-top:10px">接口地址（兼容 /chat/completions 协议）</div>
+        <input id="ep" placeholder="https://api.deepseek.com/chat/completions" value="${esc(cfg.endpoint || '')}">
         <div class="section-title" style="margin-top:10px">API Key</div>
         <input id="key" type="password" placeholder="粘贴你的密钥" value="${esc(cfg.apiKey || '')}">
         <div class="section-title" style="margin-top:10px">模型名</div>
-        <input id="model" placeholder="gpt-4o-mini" value="${esc(cfg.model || '')}">
-        <div class="muted" style="font-size:12px;margin-top:8px">支持任意 OpenAI 兼容端点。点上方芯片即自动填好「接口地址 + 模型名」，国产 DeepSeek、通义千问（阿里云百炼）、Kimi、智谱 GLM 都能用，只差你的 Key。未配置时 AI 按钮会提示来这里填。</div>
+        <input id="model" placeholder="deepseek-chat" value="${esc(cfg.model || '')}">
+        <div class="muted" style="font-size:12px;margin-top:8px">支持任意兼容 /chat/completions 协议的端点。点上方芯片即自动填好「接口地址 + 模型名」，豆包（火山方舟）、DeepSeek、通义千问（阿里云百炼）、Kimi、智谱 GLM 都能用，只差你的 Key。<b>豆包</b>请把「模型名」改成你在火山方舟开通的模型 ID（或推理接入点 <code>ep-...</code>）。未配置时 AI 按钮会提示来这里填。</div>
         <button class="btn-primary" id="save" style="margin-top:12px">保存</button>
         <button class="btn-ghost" id="back" style="width:100%;margin-top:8px">返回</button>
       </div></div>`;
@@ -706,15 +706,30 @@
           <button class="btn-ghost" id="ai" style="width:100%;margin-top:6px">AI 设置（填接口密钥）</button>
         </div>
         <div class="card" style="margin-top:14px">
+          <div class="section-title">数据与费用 · 如何调用 AI</div>
+          <p class="muted" style="margin:4px 0"><b>① 数据与费用（与 App 作者无关）：</b></p>
+          <p class="muted" style="margin:2px 0;padding-left:10px">• 你填的接口地址 / API Key / 模型名 <b>只存你自己设备</b>（本地 IndexedDB 的 meta 库），<b>不上传任何服务器</b>。<br>
+          • 调用费用由你的模型供应商（DeepSeek / 通义 / Kimi / 智谱等）按<b>你自己的账号</b>计费；本 App <b>零后端、免费</b>，作者不抽成、不代付、收不到任何数据。<br>
+          • 本 App 只是个帮你排版请求、显示结果的前端界面——你用谁的 Key、花谁的钱、走谁的 AI，都只和你与供应商有关。</p>
+          <p class="muted" style="margin:8px 0 2px"><b>② 如何调用 API（透明可查）：</b></p>
+          <p class="muted" style="margin:2px 0;padding-left:10px">点「AI 考点分析 / 押题」时，浏览器<b>直接</b>向你填的接口发一条 HTTPS 请求（OpenAI 兼容的 <code>/chat/completions</code>）：<br>
+          • <b>Header</b>：<code>Authorization: Bearer &lt;你的Key&gt;</code>、<code>Content-Type: application/json</code>；<br>
+          • <b>Body</b>：<code>{ model: 你填的模型名, messages: [系统提示(设定其为考点分析助手), 用户消息(你选中的题目与答案文本)] }</code>；<br>
+          • 供应商返回的文本<b>直接渲染到页面</b>，请求<b>不经过任何中间服务器或开发者</b>。<br>
+          • <b>唯一会离开本机的内容</b>，是<b>你被分析的这道题的文本</b>，且只发往你指定的供应商，按该供应商的隐私条款处理；题库其余部分全程离线、不出设备。</p>
+        </div>
+        <div class="card" style="margin-top:14px">
           <div class="section-title">关于</div>
-          <p class="muted" style="margin:4px 0">考点通 · 智能刷题与押题 · 离线 PWA<br>
+          <p class="muted" style="margin:4px 0">Kaodiantong 考点通 V1.0 · 智能刷题与押题 · 离线 PWA<br>
           导入你的考研 / 考公 / 高考题库文档，刷题统计进度、乱序重刷、错题本，并接入你自己的大模型做考频分析、重点梳理与押题。<br>
-          数据默认存本机；登录后题库与刷题进度同步云端（按账号隔离）。<br>
-          <b>免责声明：</b>AI 考点分析与押题由你自行接入的大模型生成，仅供参考，不保证押中当年试题，请以官方考试大纲与教材为准；本工具不构成考试或备考建议。</p>
+          数据默认存本机；登录后题库与刷题进度同步云端（按账号隔离）。</p>
+          <p class="muted" style="margin:8px 0"><b>法律声明：</b>本软件以「原样」提供，作者与宁德师范学院医学院不对使用本工具产生的任何结果承担责任；题库内容版权归原作者 / 出版方所有，用户须确保所导入内容已获合法授权、不侵犯第三方权益，并遵守相关考试纪律与知识产权法规。本工具仅用于辅助学习，不构成考试、医疗或法律建议。</p>
+          <p class="muted" style="margin:8px 0"><b>使命：</b>敬畏生命、厚植学识——以工具提升复习效率，更以诚信应考与严谨治学守护医者初心；愿每一次刷题，都是向「良医」靠近的一步。</p>
+          <p class="muted" style="margin:8px 0"><b>AI 免责声明：</b>AI 考点分析与押题由你自行接入的大模型生成，仅供参考，不保证押中当年试题，请以官方考试大纲与教材为准；本工具不构成考试或备考建议。</p>
           <div class="credits" style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line,#e0e0e0)">
             <div style="font-size:13px;line-height:1.9">
               <span class="muted">软件开发：</span>苏裕盛 教授 / 医学博士<br>
-              <span class="muted">创意发想：</span>陈欣怡 同学<br>
+              <span class="muted">创意发想：</span>叶桢 同学<br>
               <span class="muted">支持单位：</span>宁德师范学院医学院
             </div>
           </div>

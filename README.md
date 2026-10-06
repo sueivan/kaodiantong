@@ -1,7 +1,7 @@
-# 考点通 · 智能刷题与押题（独立 PWA）
+# Kaodiantong 考点通 V1.0（独立 PWA）
 
 一款**纯前端、零后端**的刷题小程序：导入考研 / 考公 / 高考 / 医学等任意科目的题库文档（TXT / CSV / PDF），
-即可刷题、统计进度、乱序重刷、错题本，并接入**你自带的**大模型（DeepSeek / 通义千问 / Kimi / 智谱 / OpenAI 兼容接口）
+即可刷题、统计进度、乱序重刷、错题本，并接入**你自带的**大模型（豆包 / DeepSeek / 通义千问 / Kimi / 智谱 等兼容接口）
 做考频分析与押题讲解。
 
 - 数据**全部存在本机**（IndexedDB），不上传任何服务器，隐私安全。
@@ -52,17 +52,17 @@ AI 功能**直连你自填的大模型接口**，平台不存你的 Key、不上
 
 1. 打开 App → 底部「我的」→「AI 设置」。
 2. 点任一**一键预设**快速填入，或手动填写：
-   - **接口地址**（OpenAI 兼容 `/chat/completions`）：
+   - **接口地址**（兼容 `/chat/completions` 协议）：
+     - 豆包（火山方舟）：`https://ark.cn-beijing.volces.com/api/v3/chat/completions`（模型填你在方舟开通的模型 ID，或推理接入点 `ep-...`）
      - DeepSeek：`https://api.deepseek.com/chat/completions`（模型 `deepseek-chat`）
      - 通义千问：`https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`（模型 `qwen-plus`）
      - Kimi：`https://api.moonshot.cn/v1/chat/completions`（模型 `moonshot-v1-8k`）
      - 智谱 GLM：`https://open.bigmodel.cn/api/paas/v4/chat/completions`（模型 `glm-4-flash`）
-     - OpenAI：`https://api.openai.com/v1/chat/completions`（模型 `gpt-4o-mini`）
    - **API Key**：对应平台申请的密钥（仅存本机 `meta` 库，不上传）。
    - **模型名**：见上方各平台默认值。
 3. 保存後，在任意题目详情页点「AI 考点分析」即可使用。
 
-> 提示：若你单位/学校有自建的 OpenAI 兼容网关，直接填其地址与模型即可，完全可控。
+> 提示：若你单位/学校有自建的兼容网关，直接填其地址与模型即可，完全可控。
 
 ---
 
@@ -112,4 +112,4 @@ exam-drill/
 
 - **PDF 导入**：依赖公共 CDN 上的 pdf.js，首次解析需联网；如需完全离线，可把 pdf.js 下载到 `assets/` 并改 `app.js` 中 `loadPdfJs()` 的引用路径。
 - **云端同步（多设备）**：当前为纯离线版，列为后续付费功能；启用时只需用官方云 SDK 覆盖 `window.Cloud` 并在 `cloud-config.js` 填入配置。
-- **版权与署名**：软件开发 苏裕盛 教授/医学博士；创意发想 陈欣怡 同学；支持单位 宁德师范学院医学院。如需改动署名请先沟通。
+- **版权与署名**：软件开发 苏裕盛 教授/医学博士；创意发想 叶桢 同学；支持单位 宁德师范学院医学院。如需改动署名请先沟通。

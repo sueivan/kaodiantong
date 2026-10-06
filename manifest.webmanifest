@@ -1,5 +1,5 @@
 {
-  "name": "考点通 · 智能刷题与押题",
+  "name": "Kaodiantong 考点通 V1.0",
   "short_name": "考点通",
   "description": "导入考研/考公/高考题库文档，刷题统计进度、乱序重刷、错题本，并接入自有大模型做考频分析与押题",
   "start_url": "index.html",
