@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#0e9aa7" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <link rel="icon" href="assets/icon-192.png" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="manifest.webmanifest?v=1" />
+  <link rel="apple-touch-icon" href="assets/icon-192.png" />
+  <title>考点通 · 智能刷题与押题</title>
+  <link rel="stylesheet" href="styles.css?v=1" />
+</head>
+<body>
+  <div id="app"></div>
+
+  <nav class="nav" id="nav">
+    <a href="#/lib" data-nav="lib"><span class="ic">🗂️</span>题库</a>
+    <a href="#/me" data-nav="me"><span class="ic">👤</span>我的</a>
+  </nav>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="db.js?v=1"></script>
+  <script src="seed.js?v=1"></script>
+  <script src="cloud-config.js?v=1"></script>
+  <script src="cloud.js?v=1"></script>
+  <script src="app.js?v=1"></script>
+</body>
+</html>
