@@ -119,8 +119,23 @@
   const TITLES = {
     lib: ['复习库', '导入题库 · 刷题 · AI 考点分析'], me: ['我的', '设置与关于']
   };
+  // 构建号：从自身 <script src="app.js?v=N"> 自动读取，无需手改（用于确认手机是否已加载新版本）
+  const BUILD = (function () {
+    try {
+      const s = document.currentScript;
+      const m = s && s.src && s.src.match(/[?&]v=(\d+)/);
+      if (m) return 'v' + m[1];
+    } catch (e) {}
+    return 'dev';
+  })();
   function header(title, sub) {
-    return `<header class="top"><div><h1>${esc(title)}</h1><div class="sub">${esc(sub || '')}</div></div></header>`;
+    return `<header class="top"><div><h1>${esc(title)}</h1><div class="sub" id="hdsub">${esc(sub || '')}</div></div></header>`;
+  }
+  // 顶栏副标题实时刷新：让「待复习 / 剩余」计数随答题立刻递减（无需退出重进）
+  function setSub(text) {
+    const el = document.getElementById('hdsub');
+    const t = String(text == null ? '' : text);
+    if (el && el.textContent !== t) el.textContent = t;
   }
   function setNav(active) {
     document.querySelectorAll('#nav a').forEach((a) => {
@@ -412,11 +427,15 @@
     }
     const due = items.filter((c) => (c.due || 0) <= Date.now());
     const queue = (due.length ? due : items).slice();
-    app.innerHTML = header('复习 · ' + cat.name, `共 ${items.length} 题 · 待复习 ${due.length} 题`) + `<div class="container" id="rv"></div>`;
+    const totalQ = items.length;
+    let i = 0;
+    // 顶栏「待复习」= 本轮还剩多少题没复习，随答题即时递减
+    function updSub() { setSub('共 ' + totalQ + ' 题 · 待复习 ' + Math.max(0, queue.length - i) + ' 题'); }
+    app.innerHTML = header('复习 · ' + cat.name, `共 ${totalQ} 题 · 待复习 ${queue.length} 题`) + `<div class="container" id="rv"></div>`;
     const box = document.getElementById('rv');
     if (queue.length === 0) { box.innerHTML = `<div class="empty"><div class="big">🎉</div><p>暂无可复习题目</p></div>`; return; }
-    let i = 0;
     function show() {
+      updSub();
       if (i >= queue.length) {
         box.innerHTML = `<div class="empty"><div class="big">✅</div><p>本轮复习完成！</p><button class="btn-ghost" id="again" style="width:100%">再来一轮</button></div>`;
         document.getElementById('again').onclick = () => renderLibQuiz(catId);
@@ -670,6 +689,8 @@
     function shuffle(a) { for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); const t = a[k]; a[k] = a[j]; a[j] = t; } return a; }
     function buildQueue() { queue = order === 'shuffle' ? shuffle(items.slice()) : items.slice(); i = 0; correct = 0; wrong = 0; }
     function updateBar() { const bar = document.getElementById('bar'); if (bar) bar.style.width = Math.round((i / total) * 100) + '%'; }
+    // 顶栏「剩余」随答题即时递减（不用退出重进）
+    function updSub() { setSub('共 ' + total + ' 题 · 剩余 ' + Math.max(0, queue.length - i) + ' 题'); }
     async function record(c, ok) {
       c.stats = c.stats || { times: 0, correct: 0, wrong: 0 };
       c.stats.times++; if (ok) c.stats.correct++; else c.stats.wrong++;
@@ -701,6 +722,7 @@
     }
 
     function show() {
+      updSub();
       if (i >= queue.length) { finish(); return; }
       const c = queue[i];
       const imgs = (c.photos || []).map((p) => '<img src="' + p + '" style="width:100%;border-radius:8px;margin-top:8px;max-height:220px;object-fit:contain">').join('');
@@ -843,7 +865,7 @@
       document.getElementById('back').onclick = () => go('#/lib/cat/' + catId);
     }
 
-    app.innerHTML = header('刷题 · ' + cat.name, '共 ' + total + ' 题') + '<div class="container" id="dv">' + renderToolbar() + '<div id="card"></div></div>';
+    app.innerHTML = header('刷题 · ' + cat.name, '共 ' + total + ' 题 · 剩余 ' + queue.length + ' 题') + '<div class="container" id="dv">' + renderToolbar() + '<div id="card"></div></div>';
     document.querySelectorAll('[data-stage]').forEach((b) => b.onclick = () => { stage = b.getAttribute('data-stage'); go(specURL(mode, stage, qtype)); });
     document.querySelectorAll('[data-qtype]').forEach((b) => b.onclick = () => { qtype = b.getAttribute('data-qtype'); go(specURL(mode, stage, qtype)); });
     document.querySelectorAll('[data-scope]').forEach((b) => b.onclick = () => { mode = b.getAttribute('data-scope'); go(specURL(mode, stage, qtype)); });
@@ -1027,8 +1049,9 @@
         <div class="card" style="margin-top:14px">
           <div class="section-title">关于</div>
           <p class="muted" style="margin:4px 0">Kaodiantong 考点通 V1.0 · 智能刷题与押题 · 离线 PWA<br>
-          导入你的考研 / 考公 / 高考题库文档，刷题统计进度、乱序重刷、错题本，并接入你自己的大模型做考频分析、重点梳理与押题。<br>
+          导入你的考研 / 考公 / 高考题库文档，三阶段刷题（背题 → 巩固 → 训练）、分题型练习、错题本，并接入你自己的大模型做考频分析、重点梳理、押题与批改。<br>
           数据默认存本机；登录后题库与刷题进度同步云端（按账号隔离）。</p>
+          <p class="muted" style="margin:4px 0;font-size:12px">当前构建：<b>${BUILD}</b>　（若此处未显示构建号，或构建号落后于最新版本，请在浏览器中对本页「强制刷新」一次以清除缓存）</p>
           <p class="muted" style="margin:8px 0"><b>法律声明：</b>本软件以「原样」提供，作者与宁德师范学院医学院不对使用本工具产生的任何结果承担责任；题库内容版权归原作者 / 出版方所有，用户须确保所导入内容已获合法授权、不侵犯第三方权益，并遵守相关考试纪律与知识产权法规。本工具仅用于辅助学习，不构成考试、医疗或法律建议。</p>
           <p class="muted" style="margin:8px 0"><b>使命：</b>敬畏生命、厚植学识——以工具提升复习效率，更以诚信应考与严谨治学守护医者初心；愿每一次刷题，都是向「良医」靠近的一步。</p>
           <p class="muted" style="margin:8px 0"><b>AI 免责声明：</b>AI 考点分析与押题由你自行接入的大模型生成，仅供参考，不保证押中当年试题，请以官方考试大纲与教材为准；本工具不构成考试或备考建议。</p>
