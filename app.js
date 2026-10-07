@@ -22,6 +22,42 @@
   function uid(p) { return (p || 'id') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
   // 间隔复习（莱特纳盒子）：盒号 1→5 对应下次复习间隔 0/1/3/7/16 天
   function dueOf(box) { const d = [0, 0, 1, 3, 7, 16]; return Date.now() + (d[box] || 0) * 86400000; }
+
+  // —— 题型识别与选项拆解 ——
+  // 题库文档未存「题型」字段，选项也混在题干里（如 "题干\nA. 甲\nB. 乙\n答案：B"），
+  // 故按「有无 A/B/C/D 选项 + 答案是否为多个字母」自动推断题型；用户可在题目里手动改。
+  const TYPE_LABEL = { all: '全部题型', single: '单选题', multi: '多选题', short: '简答题' };
+  function extractOptions(q) {
+    let text = String(q || '');
+    // 选项挤在同一行时先拆行（"… A. 甲 B. 乙 C. 丙"）
+    if (/\s[A-H]\s*[\.、．)）]\s*\S/.test(text) && !/\n\s*[A-H]\s*[\.、．)）]/.test(text)) {
+      text = text.replace(/\s+(?=[A-H]\s*[\.、．)）]\s*\S)/g, '\n');
+    }
+    const opts = [], stem = [];
+    for (const line of text.split('\n')) {
+      const t = line.trim();
+      const m = t.match(/^([A-Ha-h])\s*[\.、．)）:：]\s*(.+)$/);
+      if (m) {
+        const k = m[1].toUpperCase();
+        if (k === String.fromCharCode(65 + opts.length) && m[2].trim()) { opts.push({ key: k, text: m[2].trim() }); continue; }
+      }
+      if (opts.length) { if (t) opts[opts.length - 1].text += ' ' + t; }
+      else stem.push(line);
+    }
+    return { stem: stem.join('\n').trim(), opts };
+  }
+  function qTypeOf(item) {
+    if (item && (item.qtype === 'single' || item.qtype === 'multi' || item.qtype === 'short')) return item.qtype;
+    const q = String((item && item.question) || '');
+    const ans = String((item && item.answer) || '').trim();
+    const { opts } = extractOptions(q);
+    if (!opts.length && !/单选|多选/.test(q)) return 'short';
+    if (/多选/.test(q)) return 'multi';
+    const seg = ans.match(/^\s*([A-Ha-h][A-Ha-h\s、,，;；\/]*)/);
+    const letters = (seg ? seg[1] : ans).replace(/[^A-Ha-h]/g, '');
+    return letters.length >= 2 ? 'multi' : 'single';
+  }
+  function normAns(s) { return ((String(s || '').toUpperCase().match(/[A-H]/g)) || []).sort().join(''); }
   function toast(msg) {
     toastEl.textContent = msg; toastEl.classList.add('show');
     clearTimeout(toastTimer);
@@ -98,12 +134,12 @@
     const raw = location.hash.replace(/^#\/?/, '');
     const p = raw.split('/').filter(Boolean);
     const base = p[0] || 'lib';
-    return { base, a: p[1], b: p[2], c: p[3] };
+    return { base, a: p[1], b: p[2], c: p[3], d: p[4], e: p[5] };
   }
   function go(hash) { location.hash = hash; }
 
   async function route() {
-    const { base, a, b, c } = parseHash();
+    const { base, a, b, c, d, e } = parseHash();
     try {
       if (base === 'lib') {
         setNav('lib');
@@ -117,7 +153,8 @@
           else go('#/lib');
         } else if (a === 'quiz') { await renderLibQuiz(b); }
         else if (a === 'import') { await renderLibImport(); }
-        else if (a === 'drill') { await renderLibDrill(b, c); }
+        else if (a === 'drill') { await renderLibDrill(b, c, d, e); }
+        else if (a === 'wrongbook') { await renderWrongbook(b); }
         else if (a === 'ai') { await renderLibAI(b, c); }
         else { await renderLib(); }
       }
@@ -275,17 +312,21 @@
     if (!cat) { go('#/lib'); return; }
     const all = await DB.getAll('library');
     let items = all.filter((x) => x.type === 'item' && x.catId === catId).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const wrongN = items.filter((x) => (x.stats && x.stats.wrong > 0) || x.fav).length;
     app.innerHTML = header(cat.name, cat.desc || '分类题库') +
       `<div class="container">
         <div class="row" style="gap:8px;margin-bottom:8px">
           <button class="btn-primary btn-sm" id="drill" style="flex:1">📝 刷题（${items.length}）</button>
+          <button class="btn-ghost btn-sm" id="wrongbook" style="flex:1">⭐ 错题本（${wrongN}）</button>
+        </div>
+        <div class="row" style="gap:8px;margin-bottom:8px">
           <button class="btn-ghost btn-sm" id="quiz" style="flex:1">▶ 间隔复习</button>
+          <button class="btn-ghost btn-sm" id="add" style="flex:1">➕ 添加题目</button>
         </div>
         <div class="row" style="gap:8px;margin-bottom:10px">
           <button class="btn-ghost btn-sm" id="ai" style="flex:1">🤖 AI 考点分析</button>
           <button class="btn-ghost btn-sm" id="predict" style="flex:1">🎯 AI 押题</button>
         </div>
-        <button class="btn-ghost" id="add" style="width:100%;margin-bottom:10px">➕ 添加题目</button>
         <div id="list"></div>
       </div>` + fab('+');
     const list = document.getElementById('list');
@@ -293,8 +334,8 @@
       if (items.length === 0) { list.innerHTML = `<div class="empty"><div class="big">📝</div><p>还没有题目，点右下角 ＋ 添加</p></div>`; return; }
       list.innerHTML = items.map((it) => `<div class="list-item" data-id="${it.id}">
         <div class="grow">
-          <div class="tt">${esc(it.question || '(未命名题目)')}</div>
-          <div class="mm">${it.photos && it.photos.length ? '🖼 ' + it.photos.length + ' 张图 · ' : ''}第 ${it.box || 1} 盒</div>
+          <div class="tt">${esc(String(it.question || '(未命名题目)').split('\n')[0])}</div>
+          <div class="mm">${TYPE_LABEL[qTypeOf(it)]}${it.fav ? ' · ⭐' : ''}${it.photos && it.photos.length ? ' · 🖼 ' + it.photos.length : ''} · 第 ${it.box || 1} 盒</div>
         </div>
         <button class="icon-btn del" data-del="${it.id}" title="删除">🗑</button>
         <div class="muted chev">›</div>
@@ -307,7 +348,8 @@
     }
     draw();
     document.getElementById('quiz').onclick = () => go(`#/lib/quiz/${catId}`);
-    document.getElementById('drill').onclick = () => go(`#/lib/drill/${catId}/all`);
+    document.getElementById('drill').onclick = () => go(`#/lib/drill/${catId}/all/consolidate/all`);
+    document.getElementById('wrongbook').onclick = () => go(`#/lib/wrongbook/${catId}`);
     document.getElementById('ai').onclick = () => go(`#/lib/ai/${catId}/analyze`);
     document.getElementById('predict').onclick = () => go(`#/lib/ai/${catId}/predict`);
     document.getElementById('add').onclick = () => go(`#/lib/item/new/${catId}`);
@@ -574,74 +616,286 @@
     document.getElementById('back').onclick = () => go('#/lib');
   }
 
-  // ---- 刷题模式（进度% / 乱序 / 错题本）----
-  async function renderLibDrill(catId, mode) {
+  // ---- 刷题模式（三阶段：背题 / 巩固 / 训练 + 分题型 + 错题本）----
+
+  async function renderLibDrill(catId, mode, stage, qtype) {
     mode = mode || 'all';
+    stage = stage || 'consolidate';
+    qtype = qtype || 'all';
     const cat = await DB.get('library', catId);
     if (!cat) { go('#/lib'); return; }
     let items = (await DB.getAll('library')).filter((x) => x.type === 'item' && x.catId === catId);
-    if (mode === 'wrong') items = items.filter((x) => (x.stats && x.stats.wrong > 0));
-    if (mode === 'unseen') items = items.filter((x) => !(x.stats && x.stats.times > 0));
+    if (mode === 'wrong') items = items.filter((x) => (x.stats && x.stats.wrong > 0) || x.fav);
+    else if (mode === 'unseen') items = items.filter((x) => !(x.stats && x.stats.times > 0));
+    else if (mode === 'fav') items = items.filter((x) => x.fav);
+    if (qtype !== 'all') items = items.filter((x) => qTypeOf(x) === qtype);
+
+    const STAGES = [
+      { k: 'memorize', label: '① 背题' },
+      { k: 'consolidate', label: '② 巩固' },
+      { k: 'train', label: '③ 训练' }
+    ];
+    const QTYPES = [
+      { k: 'all', label: '全部题型' },
+      { k: 'single', label: '单选' },
+      { k: 'multi', label: '多选' },
+      { k: 'short', label: '简答' }
+    ];
+    const SCOPES = [
+      { k: 'all', label: '全部' },
+      { k: 'wrong', label: '错题本' },
+      { k: 'unseen', label: '未做过' },
+      { k: 'fav', label: '收藏' }
+    ];
+    const STAGE_HINT = {
+      memorize: '先看题、翻看答案，建立第一印象（不评分）',
+      consolidate: '看题 → 显示答案 → 自评 答对/答错（计入莱特纳盒子）',
+      train: '先作答（选择题点选 / 简答填答）→ 对答案 → 自评或 AI 批改'
+    };
+
     if (items.length === 0) {
-      app.innerHTML = header('刷题 · ' + cat.name, '') + `<div class="container"><div class="empty"><div class="big">📭</div><p>${mode === 'wrong' ? '没有错题' : mode === 'unseen' ? '没有未做过的题' : '该分类还没有题目'}</p></div><button class="btn-ghost" id="back" style="width:100%">返回</button></div>`;
-      document.getElementById('back').onclick = () => go(`#/lib/cat/${catId}`); return;
+      const emptyMsg = mode === 'wrong' ? '错题本里还没有题（答错的或手动收藏的会进这里）'
+        : mode === 'unseen' ? '没有未做过的题'
+        : mode === 'fav' ? '还没有收藏的题目（点卡片上的 ☆ 收藏）'
+        : qtype !== 'all' ? ('该分类没有「' + TYPE_LABEL[qtype] + '」')
+        : '该分类还没有题目';
+      app.innerHTML = header('刷题 · ' + cat.name, '') + '<div class="container"><div class="empty"><div class="big">📭</div><p>' + emptyMsg + '</p></div><button class="btn-ghost" id="back" style="width:100%">返回分类</button></div>';
+      document.getElementById('back').onclick = () => go('#/lib/cat/' + catId);
+      return;
     }
     const total = items.length;
-    let order = 'seq', queue = items.slice(), i = 0, correct = 0, wrong = 0;
-    app.innerHTML = header('刷题 · ' + cat.name, `共 ${total} 题`) +
-      `<div class="container" id="dv">
-        <div class="row" style="gap:8px;margin-bottom:10px">
-          <button class="btn-ghost btn-sm" id="shuffle">🔀 切乱序</button>
-          <button class="btn-ghost btn-sm" id="retry">🔁 仅错题</button>
-          <button class="btn-ghost btn-sm" id="unseen">🌱 未做过</button>
-        </div>
-        <div class="progress"><div class="bar" id="bar" style="width:0%"></div></div>
-        <div id="card"></div>
-      </div>`;
-    function shuffle(a) { for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } return a; }
+    let order = 'seq', queue = items.slice(), i = 0, correct = 0, wrong = 0, lastUserAns = '';
+
+    function specURL(m, s, q) { return '#/lib/drill/' + catId + '/' + m + '/' + s + '/' + q; }
+    function shuffle(a) { for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); const t = a[k]; a[k] = a[j]; a[j] = t; } return a; }
     function buildQueue() { queue = order === 'shuffle' ? shuffle(items.slice()) : items.slice(); i = 0; correct = 0; wrong = 0; }
     function updateBar() { const bar = document.getElementById('bar'); if (bar) bar.style.width = Math.round((i / total) * 100) + '%'; }
     async function record(c, ok) {
       c.stats = c.stats || { times: 0, correct: 0, wrong: 0 };
       c.stats.times++; if (ok) c.stats.correct++; else c.stats.wrong++;
+      if (ok) { c.box = Math.min(5, (c.box || 1) + 1); c.due = dueOf(c.box); }
+      else { c.box = 1; c.due = Date.now(); }
       await DB.put('library', c);
       if (ok) correct++; else wrong++;
     }
+    function favToggle(c, btn) {
+      c.fav = !c.fav;
+      DB.put('library', c);
+      btn.textContent = c.fav ? '⭐ 已收藏' : '☆ 收藏';
+      btn.className = c.fav ? 'btn-primary btn-sm' : 'btn-ghost btn-sm';
+    }
+
+    function renderToolbar() {
+      return '<div class="row" style="gap:6px;margin-bottom:8px">'
+          + STAGES.map((s) => '<button class="btn-sm ' + (s.k === stage ? 'btn-primary' : 'btn-ghost') + '" data-stage="' + s.k + '" style="flex:1">' + s.label + '</button>').join('')
+          + '</div>'
+          + '<div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap">'
+          + QTYPES.map((q) => '<button class="btn-sm ' + (q.k === qtype ? 'btn-primary' : 'btn-ghost') + '" data-qtype="' + q.k + '">' + q.label + '</button>').join('')
+          + '</div>'
+          + '<div class="row" style="gap:6px;margin-bottom:10px;flex-wrap:wrap">'
+          + SCOPES.map((s) => '<button class="btn-sm ' + (s.k === mode ? 'btn-primary' : 'btn-ghost') + '" data-scope="' + s.k + '">' + s.label + '</button>').join('')
+          + '<button class="btn-sm btn-ghost" id="shuffle">🔀 ' + (order === 'shuffle' ? '顺序' : '乱序') + '</button>'
+          + '</div>'
+          + '<div class="muted" style="font-size:12px;margin-bottom:8px">' + STAGE_HINT[stage] + '</div>'
+          + '<div class="progress"><div class="bar" id="bar" style="width:0%"></div></div>';
+    }
+
     function show() {
       if (i >= queue.length) { finish(); return; }
       const c = queue[i];
-      const imgs = (c.photos || []).map((p) => `<img src="${p}" style="width:100%;border-radius:8px;margin-top:8px;max-height:220px;object-fit:contain">`).join('');
-      document.getElementById('card').innerHTML = `<div class="card">
-        <div class="quiz-card">${esc(c.question)}</div>
-        ${imgs ? `<div id="imgs" style="display:none">${imgs}</div>` : ''}
-        <button class="btn-ghost" id="rev" style="width:100%">显示答案</button>
-        <div id="ans" style="display:none;margin-top:12px" class="card">${nl2br(c.answer || '(无答案)')}</div>
-        <div id="ctr" style="display:none;margin-top:10px" class="row">
-          <button class="btn-danger btn-sm" id="wrong" style="flex:1">答错</button>
-          <button class="btn-primary btn-sm" id="right" style="flex:1">答对</button>
-        </div>
-        <div class="muted" style="text-align:center;margin-top:8px">${i + 1} / ${total}</div>
-      </div>`;
+      const imgs = (c.photos || []).map((p) => '<img src="' + p + '" style="width:100%;border-radius:8px;margin-top:8px;max-height:220px;object-fit:contain">').join('');
+      const favBtn = '<button class="btn-ghost btn-sm" id="fav" style="flex:1">' + (c.fav ? '⭐ 已收藏' : '☆ 收藏') + '</button>';
+      const counter = '<div class="muted" style="text-align:center;margin-top:8px">' + (i + 1) + ' / ' + total + '</div>';
+
+      if (stage === 'memorize') {
+        document.getElementById('card').innerHTML = '<div class="card">'
+          + '<div class="quiz-card">' + esc(c.question) + '</div>'
+          + (imgs ? '<div id="imgs" style="display:none">' + imgs + '</div>' : '')
+          + '<button class="btn-ghost" id="rev" style="width:100%">显示答案</button>'
+          + '<div id="ans" style="display:none;margin-top:12px" class="card">' + nl2br(c.answer || '(无答案)') + '</div>'
+          + '<div class="row" style="margin-top:12px">' + favBtn
+          + '<button class="btn-primary btn-sm" id="next" style="flex:1">下一张 ›</button></div>'
+          + counter + '</div>';
+        document.getElementById('rev').onclick = () => { document.getElementById('ans').style.display = 'block'; const im = document.getElementById('imgs'); if (im) im.style.display = 'block'; };
+        document.getElementById('next').onclick = () => { i++; show(); };
+        document.getElementById('fav').onclick = (e) => favToggle(c, e.currentTarget);
+      }
+      else if (stage === 'consolidate') {
+        document.getElementById('card').innerHTML = '<div class="card">'
+          + '<div class="quiz-card">' + esc(c.question) + '</div>'
+          + (imgs ? '<div id="imgs" style="display:none">' + imgs + '</div>' : '')
+          + '<button class="btn-ghost" id="rev" style="width:100%">显示答案</button>'
+          + '<div id="ans" style="display:none;margin-top:12px" class="card">' + nl2br(c.answer || '(无答案)') + '</div>'
+          + '<div id="ctr" style="display:none;margin-top:10px" class="row">'
+          + '<button class="btn-danger btn-sm" id="wrong" style="flex:1">答错</button>'
+          + '<button class="btn-primary btn-sm" id="right" style="flex:1">答对</button></div>'
+          + '<div class="row" style="margin-top:10px">' + favBtn + '</div>'
+          + counter + '</div>';
+        document.getElementById('rev').onclick = () => { document.getElementById('ans').style.display = 'block'; const im = document.getElementById('imgs'); if (im) im.style.display = 'block'; document.getElementById('ctr').style.display = 'flex'; };
+        document.getElementById('wrong').onclick = async () => { await record(c, false); i++; show(); };
+        document.getElementById('right').onclick = async () => { await record(c, true); i++; show(); };
+        document.getElementById('fav').onclick = (e) => favToggle(c, e.currentTarget);
+      }
+      else {
+        const qt = qTypeOf(c);
+        const ex = extractOptions(c.question);
+        const stem = ex.stem, opts = ex.opts;
+        const showStem = stem || c.question;
+        let inputArea = '';
+        if (qt === 'short') {
+          inputArea = '<textarea id="uans" placeholder="在此填写你的答案…" style="width:100%;min-height:80px;margin-top:10px"></textarea>';
+        } else if (opts.length) {
+          inputArea = '<div id="opts" style="margin-top:10px">' + opts.map((o) => '<button class="opt-btn" data-k="' + o.key + '" style="display:block;width:100%;text-align:left;margin:6px 0;padding:10px 12px;border:1px solid #ddd;border-radius:8px;background:#fff;cursor:pointer">' + o.key + '. ' + esc(o.text) + '</button>').join('') + '</div>';
+        } else {
+          inputArea = '<textarea id="uans" placeholder="本题未识别出选项，请在此手填答案…" style="width:100%;min-height:80px;margin-top:10px"></textarea>';
+        }
+        const multiHint = qt === 'multi' ? '<div class="muted" style="font-size:12px;margin-top:6px">多选题：可点选多个选项</div>' : '';
+        document.getElementById('card').innerHTML = '<div class="card">'
+          + '<div class="quiz-card">' + esc(showStem) + '</div>'
+          + (imgs ? '<div id="imgs" style="display:none">' + imgs + '</div>' : '')
+          + inputArea + multiHint
+          + '<button class="btn-primary" id="submit" style="width:100%;margin-top:12px">对答案</button>'
+          + '<div id="result" style="display:none;margin-top:12px">'
+          + '<div class="card" id="ansbox"></div>'
+          + '<div id="aiwrap" style="margin-top:8px"></div>'
+          + '<div class="row" style="margin-top:10px">'
+          + '<button class="btn-danger btn-sm" id="wrong" style="flex:1">我答错了</button>'
+          + '<button class="btn-primary btn-sm" id="right" style="flex:1">我答对了</button></div>'
+          + '<div class="row" style="margin-top:8px">' + favBtn
+          + '<button class="btn-ghost btn-sm" id="ai" style="flex:1">🤖 AI 批改</button></div>'
+          + '</div>' + counter + '</div>';
+
+        const selected = new Set();
+        if (qt !== 'short' && opts.length) {
+          document.querySelectorAll('#opts .opt-btn').forEach((b) => {
+            b.onclick = () => {
+              const k = b.getAttribute('data-k');
+              if (qt === 'multi') {
+                if (selected.has(k)) { selected.delete(k); b.style.background = '#fff'; }
+                else { selected.add(k); b.style.background = '#eef4ff'; }
+              } else {
+                selected.clear(); selected.add(k);
+                document.querySelectorAll('#opts .opt-btn').forEach((x) => x.style.background = '#fff');
+                b.style.background = '#eef4ff';
+              }
+            };
+          });
+        }
+        document.getElementById('submit').onclick = () => {
+          let userAns = '';
+          if (qt === 'short' || !opts.length) {
+            userAns = (document.getElementById('uans').value || '').trim();
+            if (!userAns) { toast('先填写答案再对答案'); return; }
+          } else {
+            userAns = Array.from(selected).sort().join('');
+            if (!userAns) { toast('先选择一个选项'); return; }
+          }
+          lastUserAns = userAns;
+          const correctAns = normAns(c.answer);
+          let ansHtml = '<div class="muted" style="font-size:12px">正确答案</div><div style="font-weight:600">' + esc(c.answer || '(无答案)') + '</div>';
+          if (qt !== 'short' && opts.length) {
+            ansHtml += '<div style="margin-top:8px">' + opts.map((o) => {
+              const isCorrect = correctAns.indexOf(o.key) >= 0;
+              const isPicked = selected.has(o.key);
+              let bg = '#fff', tag = '';
+              if (isCorrect) { bg = '#e8f7ec'; tag = ' ✓'; }
+              if (isPicked && !isCorrect) { bg = '#fdeaea'; tag = ' ✗'; }
+              return '<div style="padding:8px 10px;border-radius:6px;margin:4px 0;background:' + bg + '">' + o.key + '. ' + esc(o.text) + tag + '</div>';
+            }).join('') + '</div>';
+          } else {
+            ansHtml += '<div class="muted" style="font-size:12px;margin-top:6px">你的作答：' + esc(userAns) + '</div>';
+          }
+          document.getElementById('ansbox').innerHTML = ansHtml;
+          document.getElementById('result').style.display = 'block';
+          document.getElementById('submit').style.display = 'none';
+        };
+        document.getElementById('wrong').onclick = async () => { await record(c, false); i++; show(); };
+        document.getElementById('right').onclick = async () => { await record(c, true); i++; show(); };
+        document.getElementById('fav').onclick = (e) => favToggle(c, e.currentTarget);
+        document.getElementById('ai').onclick = async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true; btn.textContent = 'AI 批改中…';
+          const wrap = document.getElementById('aiwrap');
+          wrap.innerHTML = '<div class="muted" style="font-size:12px">AI 正在批改…</div>';
+          try {
+            const grade = await askAI(
+              '你是严谨的阅卷老师。给定题目、标准答案和学生作答，判断学生作答是否正确（正确/部分正确/错误），并给出 1-2 句简短点评。只输出点评，不要重复题目。',
+              '题目：' + c.question + '\n标准答案：' + (c.answer || '(无)') + '\n学生作答：' + (lastUserAns || '(未填写)')
+            );
+            wrap.innerHTML = '<div class="card" style="background:#fff8e6;font-size:13px;line-height:1.6">🤖 ' + nl2br(grade) + '</div>';
+          } catch (err) {
+            wrap.innerHTML = '<div class="card" style="background:#fdeaea;font-size:13px">⚠️ ' + esc(err.message) + '<br><span class="muted">去「我的 → AI 设置」填入接口密钥即可用 AI 批改。</span></div>';
+          } finally { btn.disabled = false; btn.textContent = '🤖 AI 批改'; }
+        };
+      }
       updateBar();
-      document.getElementById('rev').onclick = () => { document.getElementById('ans').style.display = 'block'; const im = document.getElementById('imgs'); if (im) im.style.display = 'block'; document.getElementById('ctr').style.display = 'flex'; };
-      document.getElementById('wrong').onclick = async () => { await record(c, false); i++; show(); };
-      document.getElementById('right').onclick = async () => { await record(c, true); i++; show(); };
     }
+
     function finish() {
       const acc = total ? Math.round((correct / total) * 100) : 0;
-      document.getElementById('card').innerHTML = `<div class="empty"><div class="big">✅</div><p>本轮完成</p><p class="muted">答对 ${correct} · 答错 ${wrong} · 正确率 ${acc}%</p>
-        <button class="btn-primary" id="again" style="width:100%;margin-top:10px">再来一轮（乱序）</button>
-        <button class="btn-ghost" id="back" style="width:100%;margin-top:8px">返回分类</button></div>`;
-      document.getElementById('again').onclick = () => { order = 'shuffle'; buildQueue(); show(); };
-      document.getElementById('back').onclick = () => go(`#/lib/cat/${catId}`);
+      const stageLabel = (STAGES.find((s) => s.k === stage) || {}).label || '';
+      const qLabel = qtype === 'all' ? '全部题型' : TYPE_LABEL[qtype];
+      document.getElementById('card').innerHTML = '<div class="empty"><div class="big">✅</div><p>本轮完成（' + qLabel + ' · ' + stageLabel + '）</p>'
+        + '<p class="muted">答对 ' + correct + ' · 答错 ' + wrong + (stage !== 'memorize' ? ' · 正确率 ' + acc + '%' : '') + '</p>'
+        + '<button class="btn-primary" id="again" style="width:100%;margin-top:10px">再来一轮（' + (order === 'shuffle' ? '乱序' : '顺序') + '）</button>'
+        + '<button class="btn-ghost" id="back" style="width:100%;margin-top:8px">返回分类</button></div>';
+      document.getElementById('again').onclick = () => { buildQueue(); show(); };
+      document.getElementById('back').onclick = () => go('#/lib/cat/' + catId);
     }
-    document.getElementById('shuffle').onclick = () => { order = order === 'shuffle' ? 'seq' : 'shuffle'; toast(order === 'shuffle' ? '已切乱序' : '已切顺序'); };
-    document.getElementById('retry').onclick = () => go(`#/lib/drill/${catId}/wrong`);
-    document.getElementById('unseen').onclick = () => go(`#/lib/drill/${catId}/unseen`);
+
+    app.innerHTML = header('刷题 · ' + cat.name, '共 ' + total + ' 题') + '<div class="container" id="dv">' + renderToolbar() + '<div id="card"></div></div>';
+    document.querySelectorAll('[data-stage]').forEach((b) => b.onclick = () => { stage = b.getAttribute('data-stage'); go(specURL(mode, stage, qtype)); });
+    document.querySelectorAll('[data-qtype]').forEach((b) => b.onclick = () => { qtype = b.getAttribute('data-qtype'); go(specURL(mode, stage, qtype)); });
+    document.querySelectorAll('[data-scope]').forEach((b) => b.onclick = () => { mode = b.getAttribute('data-scope'); go(specURL(mode, stage, qtype)); });
+    document.getElementById('shuffle').onclick = () => { order = order === 'shuffle' ? 'seq' : 'shuffle'; toast(order === 'shuffle' ? '已切乱序' : '已切顺序'); go(specURL(mode, stage, qtype)); };
+
     buildQueue(); show();
   }
 
-  // ---- AI 考点分析 / 押题 ----
+  // ---- 错题本（答错 / 收藏）----
+  async function renderWrongbook(catId) {
+    const cat = await DB.get('library', catId);
+    if (!cat) { go('#/lib'); return; }
+    let items = (await DB.getAll('library')).filter((x) => x.type === 'item' && x.catId === catId && ((x.stats && x.stats.wrong > 0) || x.fav));
+    if (items.length === 0) {
+      app.innerHTML = header('错题本 · ' + cat.name, '') + '<div class="container"><div class="empty"><div class="big">⭐</div><p>还没有错题或收藏</p><p class="muted" style="font-size:13px">刷题时答错的题、或点 ☆ 收藏的题会出现在这里</p></div><button class="btn-ghost" id="back" style="width:100%">返回分类</button></div>';
+      document.getElementById('back').onclick = () => go('#/lib/cat/' + catId);
+      return;
+    }
+    app.innerHTML = header('错题本 · ' + cat.name, '共 ' + items.length + ' 题（答错或收藏）') + '<div class="container">'
+      + '<div class="row" style="gap:8px;margin-bottom:10px">'
+      + '<button class="btn-primary btn-sm" id="drill" style="flex:1">📝 错题重练</button>'
+      + '<button class="btn-ghost btn-sm" id="back" style="flex:1">返回</button></div>'
+      + '<div id="list"></div></div>';
+    const list = document.getElementById('list');
+    function draw() {
+      list.innerHTML = items.map((it) => {
+        return '<div class="list-item" data-id="' + it.id + '">'
+          + '<div class="grow"><div class="tt">' + esc(String(it.question || '').split('\n')[0]) + '</div>'
+          + '<div class="mm">' + TYPE_LABEL[qTypeOf(it)] + (it.fav ? ' · ⭐' : '') + ' · 错 ' + (it.stats ? it.stats.wrong : 0) + ' 次 · 第 ' + (it.box || 1) + ' 盒</div></div>'
+          + '<button class="icon-btn" data-fav="' + it.id + '" title="' + (it.fav ? '取消收藏' : '收藏') + '">' + (it.fav ? '⭐' : '☆') + '</button>'
+          + '<button class="icon-btn del" data-del="' + it.id + '" title="删除">🗑</button></div>';
+      }).join('');
+      list.querySelectorAll('[data-id]').forEach((el) => el.onclick = (e) => { if (e.target.closest('[data-fav]') || e.target.closest('[data-del]')) return; go('#/lib/item/edit/' + el.getAttribute('data-id')); });
+      list.querySelectorAll('[data-fav]').forEach((b) => b.onclick = async (e) => {
+        e.stopPropagation();
+        const id = b.getAttribute('data-fav');
+        const it = items.find((x) => x.id === id);
+        it.fav = !it.fav;
+        await DB.put('library', it);
+        if (!it.fav && !(it.stats && it.stats.wrong > 0)) items = items.filter((x) => x.id !== id);
+        draw();
+      });
+      list.querySelectorAll('[data-del]').forEach((b) => b.onclick = async (e) => {
+        e.stopPropagation();
+        if (confirm('删除这道题目？')) { const id = b.getAttribute('data-del'); await DB.del('library', id); items = items.filter((x) => x.id !== id); draw(); }
+      });
+    }
+    draw();
+    document.getElementById('drill').onclick = () => go('#/lib/drill/' + catId + '/wrong/consolidate/all');
+    document.getElementById('back').onclick = () => go('#/lib/cat/' + catId);
+  }
+
   async function askAI(system, user) {
     const cfg = ((await DB.get('meta', 'aiConfig')) || {}).value || {};
     if (!cfg.endpoint || !cfg.apiKey) throw new Error('未配置 AI：请在「我的 → AI 设置」填入接口地址与密钥');
